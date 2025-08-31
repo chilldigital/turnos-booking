@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Calendar, Clock, User, CreditCard, Phone, Mail, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Calendar, Clock, User, CreditCard, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 
 const APPOINTMENT_TYPES = [
   { id: 'consulta', name: 'Consulta', duration: 30 },
@@ -15,7 +15,6 @@ const APPOINTMENT_TYPES = [
   { id: 'incrustaciones', name: 'Incrustaciones', duration: 75 }
 ];
 
-const AVAILABLE_TIMES = ['15:00', '15:30', '19:45', '20:15'];
 const WORK_DAYS = [1, 2, 3, 4]; // Lunes a Jueves
 
 const N8N_ENDPOINTS = {
@@ -204,7 +203,7 @@ export default function BookingForm() {
         throw new Error(errorData.message || 'Error al crear el turno');
       }
 
-      const result = await response.json();
+      await response.json();
       setSuccess(true);
     } catch (err) {
       setError(err.message || 'Error al crear el turno. Intenta nuevamente.');
