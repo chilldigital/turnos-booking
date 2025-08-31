@@ -50,29 +50,52 @@ export default function BookingForm() {
 
   // Check patient by DNI
   const checkPatient = async (dni) => {
-    if (dni.length < 7) return;
+    if (dni.length < 8) {
+      setPatientFound(false);
+      return;
+    }
     
     setCheckingPatient(true);
+    setError('');
+    
     try {
       const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`);
+      
+      if (!response.ok) {
+        throw new Error('Error al consultar paciente');
+      }
+      
       const data = await response.json();
       
-      if (data.found) {
+      if (data.found && data.patient) {
+        // Autocompletar datos del paciente encontrado
         setFormData(prev => ({
           ...prev,
-          nombre: data.patient.nombre || '',
-          telefono: data.patient.telefono || '',
-          obraSocial: data.patient.obraSocial || '',
-          numeroAfiliado: data.patient.numeroAfiliado || '',
-          alergias: data.patient.alergias || '',
-          antecedentes: data.patient.antecedentes || ''
+          nombre: data.patient.nombre || data.patient.name || '',
+          telefono: data.patient.telefono || data.patient.phone || '',
+          obraSocial: data.patient.obraSocial || data.patient.insurance || '',
+          numeroAfiliado: data.patient.numeroAfiliado || data.patient.affiliateNumber || '',
+          alergias: data.patient.alergias || data.patient.allergies || 'Ninguna',
+          antecedentes: data.patient.antecedentes || data.patient.background || 'Ninguno'
         }));
         setPatientFound(true);
       } else {
+        // Limpiar datos si no se encuentra el paciente
+        setFormData(prev => ({
+          ...prev,
+          nombre: '',
+          telefono: '',
+          obraSocial: '',
+          numeroAfiliado: '',
+          alergias: '',
+          antecedentes: ''
+        }));
         setPatientFound(false);
       }
     } catch (err) {
       console.error('Error checking patient:', err);
+      setError('Error al verificar el paciente. Intenta nuevamente.');
+      setPatientFound(false);
     } finally {
       setCheckingPatient(false);
     }
@@ -147,25 +170,44 @@ export default function BookingForm() {
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno);
       
+      // Combinar fecha y hora en formato ISO completo
+      const [hours, minutes] = formData.hora.split(':');
+      const appointmentDateTime = new Date(formData.fecha);
+      appointmentDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
+      const appointmentISO = appointmentDateTime.toISOString();
+      
       const response = await fetch(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...formData,
-          duracion: appointmentType.duration,
+          // Datos del paciente
+          dni: formData.dni,
+          nombre: formData.nombre,
+          telefono: formData.telefono,
+          obraSocial: formData.obraSocial,
+          numeroAfiliado: formData.numeroAfiliado,
+          alergias: formData.alergias || 'Ninguna',
+          antecedentes: formData.antecedentes || 'Ninguno',
+          // Datos del turno
+          tipoTurno: formData.tipoTurno,
           tipoTurnoNombre: appointmentType.name,
+          duracion: appointmentType.duration,
+          fechaHora: appointmentISO, // Fecha y hora en formato ISO completo
+          timezone: 'America/Argentina/Buenos_Aires',
+          // Metadatos
           isNewPatient: !patientFound
         })
       });
 
       if (!response.ok) {
-        throw new Error('Error al crear el turno');
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Error al crear el turno');
       }
 
       const result = await response.json();
       setSuccess(true);
     } catch (err) {
-      setError('Error al crear el turno. Intenta nuevamente.');
+      setError(err.message || 'Error al crear el turno. Intenta nuevamente.');
       console.error('Error creating appointment:', err);
     } finally {
       setLoading(false);
