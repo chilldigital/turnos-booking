@@ -45,7 +45,6 @@ export default function BookingForm() {
   const [patientFound, setPatientFound] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
-  const [step, setStep] = useState(1);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
@@ -165,7 +164,6 @@ export default function BookingForm() {
 
       const result = await response.json();
       setSuccess(true);
-      setStep(3);
     } catch (err) {
       setError('Error al crear el turno. Intenta nuevamente.');
       console.error('Error creating appointment:', err);
