@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Calendar, AlertCircle, CheckCircle, Loader, User, Hash, Phone, Building2, Mail, AlertTriangle, ClipboardList, ChevronDown } from 'lucide-react';
+import OBRAS_SOCIALES from '../data/obras_sociales.json';
 
 const APPOINTMENT_TYPES = [
   { id: 'consulta', name: 'Consulta', duration: 30 },
@@ -52,6 +53,12 @@ export default function BookingForm() {
 
   // UI helpers
   const inputClass = "w-full h-11 px-4 rounded-2xl bg-zinc-100 border border-transparent placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white focus:border-transparent transition-colors";
+
+  // Opciones de obras sociales ordenadas alfabéticamente
+  const obrasSociales = useMemo(
+    () => [...OBRAS_SOCIALES].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    []
+  );
 
   // Check patient by DNI
   const checkPatient = async (dni) => {
@@ -354,13 +361,19 @@ export default function BookingForm() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Building2 className="w-4 h-4 text-zinc-500" /> Obra social</label>
-              <input
-                type="text"
-                value={formData.obraSocial}
-                onChange={(e) => handleInputChange('obraSocial', e.target.value)}
-                placeholder="Swiss Medical"
-                className={inputClass}
-              />
+              <div className="relative">
+                <select
+                  value={formData.obraSocial}
+                  onChange={(e) => handleInputChange('obraSocial', e.target.value)}
+                  className={`${inputClass} pr-10 appearance-none`}
+                >
+                  <option value="">Seleccioná obra social</option>
+                  {obrasSociales.map((os) => (
+                    <option key={os} value={os}>{os}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              </div>
             </div>
 
             <div>
@@ -407,7 +420,7 @@ export default function BookingForm() {
               <select
                 value={formData.tipoTurno}
                 onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none text-gray-500`}
+                className={`${inputClass} pr-10 appearance-none`}
                 required
               >
                 <option value="">Seleccioná el tipo de consulta</option>
@@ -428,7 +441,7 @@ export default function BookingForm() {
               <select
                 value={formData.fecha}
                 onChange={(e) => handleInputChange('fecha', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none text-gray-500`}
+                className={`${inputClass} pr-10 appearance-none`}
                 required
               >
                 <option value="">Seleccioná una fecha</option>
