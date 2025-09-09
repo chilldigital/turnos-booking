@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { Calendar, Clock, User, CreditCard, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
+import { Calendar, AlertCircle, CheckCircle, Loader, User, Hash, Phone, Building2, Mail, AlertTriangle, ClipboardList, ChevronDown } from 'lucide-react';
+import OBRAS_SOCIALES from '../data/obras_sociales.json';
 
 const APPOINTMENT_TYPES = [
   { id: 'consulta', name: 'Consulta', duration: 30 },
@@ -23,12 +24,15 @@ const N8N_ENDPOINTS = {
   GET_AVAILABILITY: 'https://n8n-automation.chilldigital.tech/webhook/get-availability'
 };
 
+const API_HEADERS = { 'X-API-KEY': process.env.REACT_APP_API_KEY || '' };
+
 export default function BookingForm() {
   // Form state
   const [formData, setFormData] = useState({
     dni: '',
     nombre: '',
     telefono: '',
+    email: '',
     obraSocial: '',
     numeroAfiliado: '',
     alergias: '',
@@ -47,6 +51,15 @@ export default function BookingForm() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
+  // UI helpers
+  const inputClass = "w-full h-11 px-4 rounded-2xl bg-zinc-100 border border-transparent placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white focus:border-transparent transition-colors";
+
+  // Opciones de obras sociales ordenadas alfabéticamente
+  const obrasSociales = useMemo(
+    () => [...OBRAS_SOCIALES].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
+    []
+  );
+
   // Check patient by DNI
   const checkPatient = async (dni) => {
     if (dni.length < 8) {
@@ -58,7 +71,10 @@ export default function BookingForm() {
     setError('');
     
     try {
-      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`);
+      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`, {
+        method: 'GET',
+        headers: { ...API_HEADERS }
+      });
       
       if (!response.ok) {
         throw new Error('Error al consultar paciente');
@@ -72,6 +88,7 @@ export default function BookingForm() {
           ...prev,
           nombre: data.patient.nombre || data.patient.name || '',
           telefono: data.patient.telefono || data.patient.phone || '',
+          email: data.patient.email || '',
           obraSocial: data.patient.obraSocial || data.patient.insurance || '',
           numeroAfiliado: data.patient.numeroAfiliado || data.patient.affiliateNumber || '',
           alergias: data.patient.alergias || data.patient.allergies || 'Ninguna',
@@ -84,6 +101,7 @@ export default function BookingForm() {
           ...prev,
           nombre: '',
           telefono: '',
+          email: '',
           obraSocial: '',
           numeroAfiliado: '',
           alergias: '',
@@ -108,7 +126,8 @@ export default function BookingForm() {
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === tipoTurno);
       const response = await fetch(
-        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`
+        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`,
+        { method: 'GET', headers: { ...API_HEADERS } }
       );
       const data = await response.json();
       setAvailableSlots(data.availableSlots || []);
@@ -177,12 +196,13 @@ export default function BookingForm() {
       
       const response = await fetch(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...API_HEADERS },
         body: JSON.stringify({
           // Datos del paciente
           dni: formData.dni,
           nombre: formData.nombre,
           telefono: formData.telefono,
+          email: formData.email,
           obraSocial: formData.obraSocial,
           numeroAfiliado: formData.numeroAfiliado,
           alergias: formData.alergias || 'Ninguna',
@@ -221,34 +241,34 @@ export default function BookingForm() {
 
   if (success) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-teal-50 to-blue-50 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-8 h-8 text-green-600" />
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-xl border border-zinc-200 shadow-sm p-8 text-center">
+          <div className="w-14 h-14 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle className="w-7 h-7 text-teal-600" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Turno Confirmado!</h2>
-          <p className="text-gray-600 mb-6">
-            Tu turno ha sido agendado exitosamente. Recibirás un recordatorio por WhatsApp un día antes.
+          <h2 className="text-2xl font-semibold tracking-tight text-zinc-900 mb-2">¡Turno confirmado!</h2>
+          <p className="text-zinc-600 mb-6">
+            Tu turno fue agendado. Te enviaremos un recordatorio por WhatsApp un día antes.
           </p>
-          <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
+          <div className="bg-zinc-50 rounded-lg p-4 space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-600">Fecha:</span>
-              <span className="font-medium">{availableDates.find(d => d.value === formData.fecha)?.label}</span>
+              <span className="text-zinc-600">Fecha</span>
+              <span className="font-medium text-zinc-900">{availableDates.find(d => d.value === formData.fecha)?.label}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Hora:</span>
-              <span className="font-medium">{formData.hora} hs</span>
+              <span className="text-zinc-600">Hora</span>
+              <span className="font-medium text-zinc-900">{formData.hora} hs</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-600">Tipo:</span>
-              <span className="font-medium">{APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno)?.name}</span>
+              <span className="text-zinc-600">Tipo</span>
+              <span className="font-medium text-zinc-900">{APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno)?.name}</span>
             </div>
           </div>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-6 w-full bg-teal-600 text-white py-2 px-4 rounded-lg hover:bg-teal-700 transition-colors"
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-6 w-full inline-flex items-center justify-center h-11 px-4 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors"
           >
-            Agendar Otro Turno
+            Agendar otro turno
           </button>
         </div>
       </div>
@@ -256,78 +276,82 @@ export default function BookingForm() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-teal-50 to-blue-50 flex items-center justify-center p-4">
-      <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
+      <div className="max-w-2xl w-full bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
         {/* Header */}
-        <div className="bg-gradient-to-r from-teal-600 to-blue-600 p-6 text-white text-center">
-          <h1 className="text-3xl font-bold mb-2">Agendar Turno</h1>
-          <p className="text-teal-100">Completa los datos para reservar tu cita</p>
+        <div className="p-6 border-b border-zinc-200 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Agendar turno</h1>
+          <p className="text-zinc-500 mt-1">Completá los datos para reservar tu cita</p>
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-6">
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
+            <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-lg flex items-center gap-2">
               <AlertCircle size={20} />
               {error}
             </div>
           )}
 
-          {/* DNI Field */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <CreditCard className="inline w-4 h-4 mr-1" />
-              DNI
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                value={formData.dni}
-                onChange={(e) => handleInputChange('dni', e.target.value)}
-                placeholder="12.345.678"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                required
-              />
-              {checkingPatient && (
-                <Loader className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 animate-spin" />
-              )}
-            </div>
-            {patientFound && (
-              <p className="text-green-600 text-sm mt-1 flex items-center gap-1">
-                <CheckCircle size={16} />
-                Paciente encontrado - datos completados automáticamente
-              </p>
-            )}
-          </div>
-
-          {/* Personal Info Grid */}
+          {/* DNI + Nombre */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <User className="inline w-4 h-4 mr-1" />
-                Nombre Completo
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-zinc-500" /> DNI</label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={formData.dni}
+                  onChange={(e) => handleInputChange('dni', e.target.value)}
+                  placeholder="12.345.678"
+                  className={inputClass}
+                  required
+                />
+                {checkingPatient && (
+                  <Loader className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400 animate-spin" />
+                )}
+              </div>
+              {patientFound && (
+                <p className="text-teal-600 text-sm mt-1 flex items-center gap-1">
+                  <CheckCircle size={16} />
+                  Paciente encontrado: datos completados automáticamente
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><User className="w-4 h-4 text-zinc-500" /> Nombre completo</label>
               <input
                 type="text"
                 value={formData.nombre}
                 onChange={(e) => handleInputChange('nombre', e.target.value)}
                 placeholder="Juan Pérez"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                className={inputClass}
                 required
               />
             </div>
-            
+          </div>
+
+          {/* Contacto: Teléfono + Email */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Phone className="inline w-4 h-4 mr-1" />
-                Teléfono
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Phone className="w-4 h-4 text-zinc-500" /> Teléfono</label>
               <input
                 type="tel"
                 value={formData.telefono}
                 onChange={(e) => handleInputChange('telefono', e.target.value)}
                 placeholder="+54 381 123 4567"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                className={inputClass}
+                required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Mail className="w-4 h-4 text-zinc-500" /> Email</label>
+              <input
+                type="email"
+                value={formData.email}
+                onChange={(e) => handleInputChange('email', e.target.value)}
+                placeholder="nombre@correo.com"
+                className={inputClass}
                 required
               />
             </div>
@@ -336,28 +360,30 @@ export default function BookingForm() {
           {/* Insurance Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Obra Social
-              </label>
-              <input
-                type="text"
-                value={formData.obraSocial}
-                onChange={(e) => handleInputChange('obraSocial', e.target.value)}
-                placeholder="OSDE, Swiss Medical, etc."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              />
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Building2 className="w-4 h-4 text-zinc-500" /> Obra social</label>
+              <div className="relative">
+                <select
+                  value={formData.obraSocial}
+                  onChange={(e) => handleInputChange('obraSocial', e.target.value)}
+                  className={`${inputClass} pr-10 appearance-none`}
+                >
+                  <option value="">Seleccioná obra social</option>
+                  {obrasSociales.map((os) => (
+                    <option key={os} value={os}>{os}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+              </div>
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                N° de Afiliado
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-zinc-500" /> N° de afiliado</label>
               <input
                 type="text"
                 value={formData.numeroAfiliado}
                 onChange={(e) => handleInputChange('numeroAfiliado', e.target.value)}
                 placeholder="123456789"
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                className={inputClass}
               />
             </div>
           </div>
@@ -365,83 +391,76 @@ export default function BookingForm() {
           {/* Medical Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Alergias
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-zinc-500" /> Alergias</label>
               <input
                 type="text"
                 value={formData.alergias}
                 onChange={(e) => handleInputChange('alergias', e.target.value)}
                 placeholder="Ninguna, Penicilina, etc."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                className={inputClass}
               />
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Antecedentes
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><ClipboardList className="w-4 h-4 text-zinc-500" /> Antecedentes</label>
               <input
                 type="text"
                 value={formData.antecedentes}
                 onChange={(e) => handleInputChange('antecedentes', e.target.value)}
                 placeholder="Diabetes, Hipertensión, etc."
-                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                className={inputClass}
               />
             </div>
           </div>
 
           {/* Appointment Type */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Clock className="inline w-4 h-4 mr-1" />
-              Tipo de Turno
-            </label>
-            <select
-              value={formData.tipoTurno}
-              onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              required
-            >
-              <option value="">Selecciona el tipo de consulta</option>
-              {APPOINTMENT_TYPES.map((type) => (
-                <option key={type.id} value={type.id}>
-                  {type.name} ({type.duration} min)
-                </option>
-              ))}
-            </select>
+            <label className="block text-sm font-medium text-zinc-700 mb-1">Tipo de turno</label>
+            <div className="relative">
+              <select
+                value={formData.tipoTurno}
+                onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
+                className={`${inputClass} pr-10 appearance-none`}
+                required
+              >
+                <option value="">Seleccioná el tipo de consulta</option>
+                {APPOINTMENT_TYPES.map((type) => (
+                  <option key={type.id} value={type.id}>
+                    {type.name} ({type.duration} min)
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            </div>
           </div>
 
           {/* Date Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              <Calendar className="inline w-4 h-4 mr-1" />
-              Fecha
-            </label>
-            <select
-              value={formData.fecha}
-              onChange={(e) => handleInputChange('fecha', e.target.value)}
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-              required
-            >
-              <option value="">Selecciona una fecha</option>
-              {availableDates.map((date) => (
-                <option key={date.value} value={date.value}>
-                  {date.label}
-                </option>
-              ))}
-            </select>
+            <label className="block text-sm font-medium text-zinc-700 mb-1">Fecha</label>
+            <div className="relative">
+              <select
+                value={formData.fecha}
+                onChange={(e) => handleInputChange('fecha', e.target.value)}
+                className={`${inputClass} pr-10 appearance-none`}
+                required
+              >
+                <option value="">Seleccioná una fecha</option>
+                {availableDates.map((date) => (
+                  <option key={date.value} value={date.value}>
+                    {date.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+            </div>
           </div>
 
           {/* Time Selection */}
           {formData.fecha && formData.tipoTurno && (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                <Clock className="inline w-4 h-4 mr-1" />
-                Horario Disponible
-              </label>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">Horarios disponibles</label>
               {loadingAvailability ? (
-                <div className="flex items-center gap-2 p-3 text-gray-600">
+                <div className="flex items-center gap-2 p-3 text-zinc-600">
                   <Loader className="w-5 h-5 animate-spin" />
                   Cargando horarios disponibles...
                 </div>
@@ -452,11 +471,12 @@ export default function BookingForm() {
                       key={slot}
                       type="button"
                       onClick={() => handleInputChange('hora', slot)}
-                      className={`p-3 text-sm rounded-lg border transition-colors ${
+                      className={`h-10 px-3 text-sm rounded-md border transition-colors ${
                         formData.hora === slot
                           ? 'bg-teal-600 text-white border-teal-600'
-                          : 'bg-white text-gray-700 border-gray-300 hover:border-teal-500'
+                          : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
                       }`}
+                      aria-pressed={formData.hora === slot}
                     >
                       {slot} hs
                     </button>
@@ -464,7 +484,7 @@ export default function BookingForm() {
                 </div>
               )}
               {!loadingAvailability && availableSlots.length === 0 && (
-                <p className="text-gray-500 text-sm p-3 bg-gray-50 rounded-lg">
+                <p className="text-zinc-600 text-sm p-3 bg-zinc-50 rounded-lg">
                   No hay horarios disponibles para esta fecha y tipo de turno.
                 </p>
               )}
@@ -472,21 +492,21 @@ export default function BookingForm() {
           )}
 
           {/* Submit Button */}
-          <div className="pt-4">
+          <div className="pt-2">
             <button
               type="submit"
               disabled={!isFormValid() || loading}
-              className="w-full bg-gradient-to-r from-teal-600 to-blue-600 text-white py-3 px-6 rounded-lg font-medium text-lg hover:from-teal-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2"
+              className="w-full inline-flex items-center justify-center h-11 px-4 rounded-lg bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors gap-2"
             >
               {loading ? (
                 <>
                   <Loader className="w-5 h-5 animate-spin" />
-                  Creando Turno...
+                  Creando turno...
                 </>
               ) : (
                 <>
                   <Calendar className="w-5 h-5" />
-                  Confirmar Turno
+                  Confirmar turno
                 </>
               )}
             </button>
