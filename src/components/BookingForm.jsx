@@ -307,15 +307,9 @@ export default function BookingForm() {
                   required
                 />
                 {checkingPatient && (
-                  <Loader className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-400 animate-spin" />
+                  <Loader className="absolute right-3 top-3 w-5 h-5 text-zinc-400 animate-spin" />
                 )}
               </div>
-              {patientFound && (
-                <p className="text-teal-600 text-sm mt-1 flex items-center gap-1">
-                  <CheckCircle size={16} />
-                  Paciente encontrado: datos completados automáticamente
-                </p>
-              )}
             </div>
 
             <div>
@@ -330,6 +324,12 @@ export default function BookingForm() {
               />
             </div>
           </div>
+          {patientFound && (
+            <div className="flex items-center gap-1 text-teal-600 text-sm mt-1">
+              <CheckCircle size={16} />
+              <span>¡Paciente encontrado! Datos completados automáticamente</span>
+            </div>
+          )}
 
           {/* Contacto: Teléfono + Email */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -365,11 +365,11 @@ export default function BookingForm() {
                 <select
                   value={formData.obraSocial}
                   onChange={(e) => handleInputChange('obraSocial', e.target.value)}
-                  className={`${inputClass} pr-10 appearance-none`}
+                  className={`${inputClass} pr-10 appearance-none ${formData.obraSocial === '' ? 'text-gray-400' : 'text-black'}`}
                 >
-                  <option value="">Seleccioná obra social</option>
+                  <option value="" className="text-gray-400">Seleccioná obra social</option>
                   {obrasSociales.map((os) => (
-                    <option key={os} value={os}>{os}</option>
+                    <option key={os} value={os} className="text-black">{os}</option>
                   ))}
                 </select>
                 <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
@@ -420,12 +420,12 @@ export default function BookingForm() {
               <select
                 value={formData.tipoTurno}
                 onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none`}
+                className={`${inputClass} pr-10 appearance-none ${formData.tipoTurno === '' ? 'text-gray-400' : 'text-black'}`}
                 required
               >
-                <option value="">Seleccioná el tipo de consulta</option>
+                <option value="" className="text-gray-400">Seleccioná el tipo de consulta</option>
                 {APPOINTMENT_TYPES.map((type) => (
-                  <option key={type.id} value={type.id}>
+                  <option key={type.id} value={type.id} className="text-black">
                     {type.name} ({type.duration} min)
                   </option>
                 ))}
@@ -441,12 +441,12 @@ export default function BookingForm() {
               <select
                 value={formData.fecha}
                 onChange={(e) => handleInputChange('fecha', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none`}
+                className={`${inputClass} pr-10 appearance-none ${formData.fecha === '' ? 'text-gray-400' : 'text-black'}`}
                 required
               >
-                <option value="">Seleccioná una fecha</option>
+                <option value="" className="text-gray-400">Seleccioná una fecha</option>
                 {availableDates.map((date) => (
-                  <option key={date.value} value={date.value}>
+                  <option key={date.value} value={date.value} className="text-black">
                     {date.label}
                   </option>
                 ))}
