@@ -23,6 +23,8 @@ const N8N_ENDPOINTS = {
   GET_AVAILABILITY: 'https://n8n-automation.chilldigital.tech/webhook/get-availability'
 };
 
+const API_HEADERS = { 'X-API-KEY': process.env.REACT_APP_API_KEY || '' };
+
 export default function BookingForm() {
   // Form state
   const [formData, setFormData] = useState({
@@ -62,7 +64,10 @@ export default function BookingForm() {
     setError('');
     
     try {
-      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`);
+      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`, {
+        method: 'GET',
+        headers: { ...API_HEADERS }
+      });
       
       if (!response.ok) {
         throw new Error('Error al consultar paciente');
@@ -114,7 +119,8 @@ export default function BookingForm() {
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === tipoTurno);
       const response = await fetch(
-        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`
+        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`,
+        { method: 'GET', headers: { ...API_HEADERS } }
       );
       const data = await response.json();
       setAvailableSlots(data.availableSlots || []);
@@ -183,12 +189,13 @@ export default function BookingForm() {
       
       const response = await fetch(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...API_HEADERS },
         body: JSON.stringify({
           // Datos del paciente
           dni: formData.dni,
           nombre: formData.nombre,
           telefono: formData.telefono,
+          email: formData.email,
           obraSocial: formData.obraSocial,
           numeroAfiliado: formData.numeroAfiliado,
           alergias: formData.alergias || 'Ninguna',
@@ -338,6 +345,7 @@ export default function BookingForm() {
                 onChange={(e) => handleInputChange('email', e.target.value)}
                 placeholder="nombre@correo.com"
                 className={inputClass}
+                required
               />
             </div>
           </div>
