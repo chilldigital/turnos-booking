@@ -1,6 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Calendar, AlertCircle, CheckCircle, Loader, User, Hash, Phone, Building2, Mail, AlertTriangle, ClipboardList, ChevronDown } from 'lucide-react';
-import OBRAS_SOCIALES from '../data/obras_sociales.json';
+import React, { useMemo, useRef, useState } from 'react';
+import { Calendar, Clock, User, CreditCard, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 
 const APPOINTMENT_TYPES = [
   { id: 'consulta', name: 'Consulta', duration: 30 },
@@ -18,21 +17,42 @@ const APPOINTMENT_TYPES = [
 
 const WORK_DAYS = [1, 2, 3, 4]; // Lunes a Jueves
 
+const BASE_URL = (process.env.REACT_APP_N8N_BASE_URL || 'https://n8n-automation.chilldigital.tech').replace(/\/+$/, '');
 const N8N_ENDPOINTS = {
-  CHECK_PATIENT: 'https://n8n-automation.chilldigital.tech/webhook/check-patient',
-  CREATE_APPOINTMENT: 'https://n8n-automation.chilldigital.tech/webhook/create-appointment',
-  GET_AVAILABILITY: 'https://n8n-automation.chilldigital.tech/webhook/get-availability'
+  CHECK_PATIENT: `${BASE_URL}/webhook/check-patient`,
+  CREATE_APPOINTMENT: `${BASE_URL}/webhook/create-appointment`,
+  GET_AVAILABILITY: `${BASE_URL}/webhook/get-availability`
 };
 
-const API_HEADERS = { 'X-API-KEY': process.env.REACT_APP_API_KEY || '' };
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+function toLocalISOStringWithOffset(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const tzo = -date.getTimezoneOffset();
+  const sign = tzo >= 0 ? '+' : '-';
+  const hh = pad(Math.floor(Math.abs(tzo) / 60));
+  const mm = pad(Math.abs(tzo) % 60);
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${hh}:${mm}`
+  );
+}
 
 export default function BookingForm() {
-  // Form state
   const [formData, setFormData] = useState({
     dni: '',
     nombre: '',
     telefono: '',
-    email: '',
     obraSocial: '',
     numeroAfiliado: '',
     alergias: '',
@@ -42,53 +62,37 @@ export default function BookingForm() {
     hora: ''
   });
 
-  // UI state
   const [loading, setLoading] = useState(false);
   const [checkingPatient, setCheckingPatient] = useState(false);
   const [patientFound, setPatientFound] = useState(false);
+  const [patientSearched, setPatientSearched] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  // UI helpers
-  const inputClass = "w-full h-11 px-4 rounded-2xl bg-zinc-100 border border-transparent placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white focus:border-transparent transition-colors";
+  const dniDebounceRef = useRef(null);
 
-  // Opciones de obras sociales ordenadas alfabéticamente
-  const obrasSociales = useMemo(
-    () => [...OBRAS_SOCIALES].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' })),
-    []
-  );
-
-  // Check patient by DNI
   const checkPatient = async (dni) => {
     if (dni.length < 8) {
       setPatientFound(false);
+      setPatientSearched(false);
       return;
     }
-    
+
     setCheckingPatient(true);
     setError('');
-    
+
     try {
-      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`, {
-        method: 'GET',
-        headers: { ...API_HEADERS }
-      });
-      
-      if (!response.ok) {
-        throw new Error('Error al consultar paciente');
-      }
-      
+      const response = await fetchWithTimeout(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`, {}, 10000);
+      if (!response.ok) throw new Error('Error al consultar paciente');
       const data = await response.json();
-      
+
       if (data.found && data.patient) {
-        // Autocompletar datos del paciente encontrado
         setFormData(prev => ({
           ...prev,
           nombre: data.patient.nombre || data.patient.name || '',
           telefono: data.patient.telefono || data.patient.phone || '',
-          email: data.patient.email || '',
           obraSocial: data.patient.obraSocial || data.patient.insurance || '',
           numeroAfiliado: data.patient.numeroAfiliado || data.patient.affiliateNumber || '',
           alergias: data.patient.alergias || data.patient.allergies || 'Ninguna',
@@ -96,39 +100,31 @@ export default function BookingForm() {
         }));
         setPatientFound(true);
       } else {
-        // Limpiar datos si no se encuentra el paciente
-        setFormData(prev => ({
-          ...prev,
-          nombre: '',
-          telefono: '',
-          email: '',
-          obraSocial: '',
-          numeroAfiliado: '',
-          alergias: '',
-          antecedentes: ''
-        }));
         setPatientFound(false);
       }
+      setPatientSearched(true);
     } catch (err) {
       console.error('Error checking patient:', err);
       setError('Error al verificar el paciente. Intenta nuevamente.');
       setPatientFound(false);
+      setPatientSearched(true);
     } finally {
       setCheckingPatient(false);
     }
   };
 
-  // Get available slots for selected date and appointment type
   const getAvailableSlots = async (fecha, tipoTurno) => {
     if (!fecha || !tipoTurno) return;
-    
+
     setLoadingAvailability(true);
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === tipoTurno);
-      const response = await fetch(
+      const response = await fetchWithTimeout(
         `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`,
-        { method: 'GET', headers: { ...API_HEADERS } }
+        {},
+        10000
       );
+      if (!response.ok) throw new Error('Error al consultar disponibilidad');
       const data = await response.json();
       setAvailableSlots(data.availableSlots || []);
     } catch (err) {
@@ -139,38 +135,42 @@ export default function BookingForm() {
     }
   };
 
-  // Generate available dates (next 2 weeks, only work days)
   const availableDates = useMemo(() => {
     const dates = [];
     const today = new Date();
-    
     for (let i = 1; i <= 14; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      
-      if (WORK_DAYS.includes(date.getDay())) {
-        dates.push({
-          value: date.toISOString().split('T')[0],
-          label: date.toLocaleDateString('es-AR', { 
-            weekday: 'long', 
-            day: '2-digit', 
-            month: 'long' 
-          })
-        });
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      if (WORK_DAYS.includes(d.getDay())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const value = `${y}-${m}-${day}`;
+        const label = d.toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        dates.push({ value, label });
       }
     }
-    
     return dates;
   }, []);
 
-  // Handle form input changes
-  const handleInputChange = (field, value) => {
+  const handleInputChange = (field, rawValue) => {
+    let value = rawValue;
+
+    if (field === 'dni') value = (rawValue || '').replace(/\D/g, '');
+    if (field === 'telefono') value = (rawValue || '').replace(/[ .-]/g, '');
+
     setFormData(prev => ({ ...prev, [field]: value }));
-    
+
     if (field === 'dni') {
-      checkPatient(value);
+      if (dniDebounceRef.current) clearTimeout(dniDebounceRef.current);
+      if (value && value.length >= 8) {
+        dniDebounceRef.current = setTimeout(() => checkPatient(value), 400);
+      } else {
+        setPatientFound(false);
+        setPatientSearched(false);
+      }
     }
-    
+
     if (field === 'fecha' || field === 'tipoTurno') {
       const newFormData = { ...formData, [field]: value };
       if (newFormData.fecha && newFormData.tipoTurno) {
@@ -179,7 +179,6 @@ export default function BookingForm() {
     }
   };
 
-  // Submit appointment
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -187,40 +186,38 @@ export default function BookingForm() {
 
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno);
-      
-      // Combinar fecha y hora en formato ISO completo
       const [hours, minutes] = formData.hora.split(':');
       const appointmentDateTime = new Date(formData.fecha);
       appointmentDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
-      const appointmentISO = appointmentDateTime.toISOString();
-      
-      const response = await fetch(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
+      const appointmentISO = toLocalISOStringWithOffset(appointmentDateTime);
+
+      const response = await fetchWithTimeout(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...API_HEADERS },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Datos del paciente
           dni: formData.dni,
           nombre: formData.nombre,
           telefono: formData.telefono,
-          email: formData.email,
           obraSocial: formData.obraSocial,
           numeroAfiliado: formData.numeroAfiliado,
           alergias: formData.alergias || 'Ninguna',
           antecedentes: formData.antecedentes || 'Ninguno',
-          // Datos del turno
           tipoTurno: formData.tipoTurno,
           tipoTurnoNombre: appointmentType.name,
           duracion: appointmentType.duration,
-          fechaHora: appointmentISO, // Fecha y hora en formato ISO completo
+          fechaHora: appointmentISO,
           timezone: 'America/Argentina/Buenos_Aires',
-          // Metadatos
           isNewPatient: !patientFound
         })
-      });
+      }, 15000);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Error al crear el turno');
+        let msg = 'Error al crear el turno';
+        try {
+          const errorData = await response.json();
+          msg = errorData.message || msg;
+        } catch (_) {}
+        throw new Error(msg);
       }
 
       await response.json();
@@ -233,40 +230,40 @@ export default function BookingForm() {
     }
   };
 
-  // Validation
   const isFormValid = () => {
-    return formData.dni && formData.nombre && formData.telefono && 
-           formData.tipoTurno && formData.fecha && formData.hora;
+    const dniOk = formData.dni && formData.dni.length >= 8;
+    const telOk = formData.telefono && formData.telefono.replace(/\D/g, '').length >= 8;
+    return dniOk && formData.nombre && telOk && formData.tipoTurno && formData.fecha && formData.hora;
   };
 
   if (success) {
     return (
-      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-white rounded-xl border border-zinc-200 shadow-sm p-8 text-center">
-          <div className="w-14 h-14 bg-teal-50 rounded-full flex items-center justify-center mx-auto mb-4">
-            <CheckCircle className="w-7 h-7 text-teal-600" />
+      <div className="min-h-screen bg-gradient-to-br from-teal-50 to-blue-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle className="w-8 h-8 text-green-600" />
           </div>
-          <h2 className="text-2xl font-semibold tracking-tight text-zinc-900 mb-2">¡Turno confirmado!</h2>
-          <p className="text-zinc-600 mb-6">
-            Tu turno fue agendado. Te enviaremos un recordatorio por WhatsApp un día antes.
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Turno confirmado!</h2>
+          <p className="text-gray-600 mb-6">
+            Tu turno ha sido agendado exitosamente. Recibirás un recordatorio por WhatsApp un día antes.
           </p>
-          <div className="bg-zinc-50 rounded-lg p-4 space-y-2 text-sm">
+          <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-zinc-600">Fecha</span>
-              <span className="font-medium text-zinc-900">{availableDates.find(d => d.value === formData.fecha)?.label}</span>
+              <span className="text-gray-600">Fecha:</span>
+              <span className="font-medium">{availableDates.find(d => d.value === formData.fecha)?.label}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-zinc-600">Hora</span>
-              <span className="font-medium text-zinc-900">{formData.hora} hs</span>
+              <span className="text-gray-600">Hora:</span>
+              <span className="font-medium">{formData.hora} hs</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-zinc-600">Tipo</span>
-              <span className="font-medium text-zinc-900">{APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno)?.name}</span>
+              <span className="text-gray-600">Tipo:</span>
+              <span className="font-medium">{APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno)?.name}</span>
             </div>
           </div>
           <button
             onClick={() => window.location.reload()}
-            className="mt-6 w-full inline-flex items-center justify-center h-11 px-4 rounded-lg bg-teal-600 text-white hover:bg-teal-700 transition-colors"
+            className="mt-6 w-full bg-teal-600 text-white py-2 px-4 rounded-lg hover:bg-teal-700 transition-colors"
           >
             Agendar otro turno
           </button>
@@ -276,191 +273,199 @@ export default function BookingForm() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
-      <div className="max-w-2xl w-full bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
-        {/* Header */}
-        <div className="p-6 border-b border-zinc-200 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Agendar turno</h1>
-          <p className="text-zinc-500 mt-1">Completá los datos para reservar tu cita</p>
+    <div className="min-h-screen bg-gradient-to-br from-teal-50 to-blue-50 flex items-center justify-center p-4">
+      <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-teal-600 to-blue-600 p-6 text-white text-center">
+          <h1 className="text-3xl font-bold mb-2">Agendar turno</h1>
+          <p className="text-teal-100">Completá los datos para reservar tu cita</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6" aria-busy={loading}>
           {error && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-lg flex items-center gap-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2" role="alert" aria-live="polite">
               <AlertCircle size={20} />
               {error}
             </div>
           )}
 
-          {/* DNI + Nombre */}
+          <div>
+            <label htmlFor="dni" className="block text-sm font-medium text-gray-700 mb-2">
+              <CreditCard className="inline w-4 h-4 mr-1" />
+              DNI
+            </label>
+            <div className="relative">
+              <input
+                id="dni"
+                type="text"
+                value={formData.dni}
+                onChange={(e) => handleInputChange('dni', e.target.value)}
+                placeholder="Ej: 12345678"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                required
+                inputMode="numeric"
+                aria-describedby="dni-help"
+              />
+              {checkingPatient && (
+                <Loader className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 animate-spin" aria-label="Buscando paciente" />
+              )}
+            </div>
+            {patientFound && (
+              <p className="text-green-600 text-sm mt-1 flex items-center gap-1" aria-live="polite">
+                <CheckCircle size={16} />
+                Paciente encontrado. Datos completados automáticamente.
+              </p>
+            )}
+            {patientSearched && !patientFound && !checkingPatient && formData.dni.length >= 8 && (
+              <p id="dni-help" className="text-gray-600 text-sm mt-1">
+                Paciente no encontrado. Podés continuar como paciente nuevo.
+              </p>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-zinc-500" /> DNI</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={formData.dni}
-                  onChange={(e) => handleInputChange('dni', e.target.value)}
-                  placeholder="12.345.678"
-                  className={inputClass}
-                  required
-                />
-                {checkingPatient && (
-                  <Loader className="absolute right-3 top-3 w-5 h-5 text-zinc-400 animate-spin" />
-                )}
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><User className="w-4 h-4 text-zinc-500" /> Nombre completo</label>
+              <label htmlFor="nombre" className="block text-sm font-medium text-gray-700 mb-2">
+                <User className="inline w-4 h-4 mr-1" />
+                Nombre completo
+              </label>
               <input
+                id="nombre"
                 type="text"
                 value={formData.nombre}
                 onChange={(e) => handleInputChange('nombre', e.target.value)}
                 placeholder="Juan Pérez"
-                className={inputClass}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 required
               />
             </div>
-          </div>
-          {patientFound && (
-            <div className="flex items-center gap-1 text-teal-600 text-sm mt-1">
-              <CheckCircle size={16} />
-              <span>¡Paciente encontrado! Datos completados automáticamente</span>
-            </div>
-          )}
 
-          {/* Contacto: Teléfono + Email */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Phone className="w-4 h-4 text-zinc-500" /> Teléfono</label>
+              <label htmlFor="telefono" className="block text-sm font-medium text-gray-700 mb-2">
+                <Phone className="inline w-4 h-4 mr-1" />
+                Teléfono
+              </label>
               <input
+                id="telefono"
                 type="tel"
                 value={formData.telefono}
                 onChange={(e) => handleInputChange('telefono', e.target.value)}
-                placeholder="+54 381 123 4567"
-                className={inputClass}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Mail className="w-4 h-4 text-zinc-500" /> Email</label>
-              <input
-                type="email"
-                value={formData.email}
-                onChange={(e) => handleInputChange('email', e.target.value)}
-                placeholder="nombre@correo.com"
-                className={inputClass}
+                placeholder="Ej: +54 3811234567"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 required
               />
             </div>
           </div>
 
-          {/* Insurance Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Building2 className="w-4 h-4 text-zinc-500" /> Obra social</label>
-              <div className="relative">
-                <select
-                  value={formData.obraSocial}
-                  onChange={(e) => handleInputChange('obraSocial', e.target.value)}
-                  className={`${inputClass} pr-10 appearance-none ${formData.obraSocial === '' ? 'text-gray-400' : 'text-black'}`}
-                >
-                  <option value="" className="text-gray-400">Seleccioná obra social</option>
-                  {obrasSociales.map((os) => (
-                    <option key={os} value={os} className="text-black">{os}</option>
-                  ))}
-                </select>
-                <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-              </div>
+              <label htmlFor="obraSocial" className="block text-sm font-medium text-gray-700 mb-2">
+                Obra social
+              </label>
+              <input
+                id="obraSocial"
+                type="text"
+                value={formData.obraSocial}
+                onChange={(e) => handleInputChange('obraSocial', e.target.value)}
+                placeholder="OSDE, Swiss Medical, etc."
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><Hash className="w-4 h-4 text-zinc-500" /> N° de afiliado</label>
+              <label htmlFor="numeroAfiliado" className="block text-sm font-medium text-gray-700 mb-2">
+                N° de afiliado
+              </label>
               <input
+                id="numeroAfiliado"
                 type="text"
                 value={formData.numeroAfiliado}
                 onChange={(e) => handleInputChange('numeroAfiliado', e.target.value)}
                 placeholder="123456789"
-                className={inputClass}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               />
             </div>
           </div>
 
-          {/* Medical Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-zinc-500" /> Alergias</label>
+              <label htmlFor="alergias" className="block text-sm font-medium text-gray-700 mb-2">
+                Alergias
+              </label>
               <input
+                id="alergias"
                 type="text"
                 value={formData.alergias}
                 onChange={(e) => handleInputChange('alergias', e.target.value)}
                 placeholder="Ninguna, Penicilina, etc."
-                className={inputClass}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1 flex items-center gap-2"><ClipboardList className="w-4 h-4 text-zinc-500" /> Antecedentes</label>
+              <label htmlFor="antecedentes" className="block text-sm font-medium text-gray-700 mb-2">
+                Antecedentes
+              </label>
               <input
+                id="antecedentes"
                 type="text"
                 value={formData.antecedentes}
                 onChange={(e) => handleInputChange('antecedentes', e.target.value)}
                 placeholder="Diabetes, Hipertensión, etc."
-                className={inputClass}
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               />
             </div>
           </div>
 
-          {/* Appointment Type */}
           <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">Tipo de turno</label>
-            <div className="relative">
-              <select
-                value={formData.tipoTurno}
-                onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none ${formData.tipoTurno === '' ? 'text-gray-400' : 'text-black'}`}
-                required
-              >
-                <option value="" className="text-gray-400">Seleccioná el tipo de consulta</option>
-                {APPOINTMENT_TYPES.map((type) => (
-                  <option key={type.id} value={type.id} className="text-black">
-                    {type.name} ({type.duration} min)
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-            </div>
+            <label htmlFor="tipoTurno" className="block text-sm font-medium text-gray-700 mb-2">
+              <Clock className="inline w-4 h-4 mr-1" />
+              Tipo de turno
+            </label>
+            <select
+              id="tipoTurno"
+              value={formData.tipoTurno}
+              onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              required
+            >
+              <option value="">Seleccioná el tipo de consulta</option>
+              {APPOINTMENT_TYPES.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.name} ({type.duration} min)
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Date Selection */}
           <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">Fecha</label>
-            <div className="relative">
-              <select
-                value={formData.fecha}
-                onChange={(e) => handleInputChange('fecha', e.target.value)}
-                className={`${inputClass} pr-10 appearance-none ${formData.fecha === '' ? 'text-gray-400' : 'text-black'}`}
-                required
-              >
-                <option value="" className="text-gray-400">Seleccioná una fecha</option>
-                {availableDates.map((date) => (
-                  <option key={date.value} value={date.value} className="text-black">
-                    {date.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
-            </div>
+            <label htmlFor="fecha" className="block text-sm font-medium text-gray-700 mb-2">
+              <Calendar className="inline w-4 h-4 mr-1" />
+              Fecha
+            </label>
+            <select
+              id="fecha"
+              value={formData.fecha}
+              onChange={(e) => handleInputChange('fecha', e.target.value)}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              required
+            >
+              <option value="">Seleccioná una fecha</option>
+              {availableDates.map((date) => (
+                <option key={date.value} value={date.value}>
+                  {date.label}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Time Selection */}
           {formData.fecha && formData.tipoTurno && (
             <div>
-              <label className="block text-sm font-medium text-zinc-700 mb-1">Horarios disponibles</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                <Clock className="inline w-4 h-4 mr-1" />
+                Horario disponible
+              </label>
               {loadingAvailability ? (
-                <div className="flex items-center gap-2 p-3 text-zinc-600">
+                <div className="flex items-center gap-2 p-3 text-gray-600">
                   <Loader className="w-5 h-5 animate-spin" />
                   Cargando horarios disponibles...
                 </div>
@@ -471,10 +476,10 @@ export default function BookingForm() {
                       key={slot}
                       type="button"
                       onClick={() => handleInputChange('hora', slot)}
-                      className={`h-10 px-3 text-sm rounded-md border transition-colors ${
+                      className={`p-3 text-sm rounded-lg border transition-colors ${
                         formData.hora === slot
                           ? 'bg-teal-600 text-white border-teal-600'
-                          : 'bg-white text-zinc-700 border-zinc-300 hover:bg-zinc-50'
+                          : 'bg-white text-gray-700 border-gray-300 hover:border-teal-500'
                       }`}
                       aria-pressed={formData.hora === slot}
                     >
@@ -484,19 +489,21 @@ export default function BookingForm() {
                 </div>
               )}
               {!loadingAvailability && availableSlots.length === 0 && (
-                <p className="text-zinc-600 text-sm p-3 bg-zinc-50 rounded-lg">
+                <p className="text-gray-500 text-sm p-3 bg-gray-50 rounded-lg">
                   No hay horarios disponibles para esta fecha y tipo de turno.
                 </p>
+              )}
+              {formData.fecha && formData.tipoTurno && !formData.hora && availableSlots.length > 0 && (
+                <p className="text-gray-600 text-sm mt-2">Seleccioná un horario para continuar.</p>
               )}
             </div>
           )}
 
-          {/* Submit Button */}
-          <div className="pt-2">
+          <div className="pt-4">
             <button
               type="submit"
               disabled={!isFormValid() || loading}
-              className="w-full inline-flex items-center justify-center h-11 px-4 rounded-lg bg-teal-600 text-white font-medium hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors gap-2"
+              className="w-full bg-gradient-to-r from-teal-600 to-blue-600 text-white py-3 px-6 rounded-lg font-medium text-lg hover:from-teal-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2"
             >
               {loading ? (
                 <>
