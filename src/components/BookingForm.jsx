@@ -17,7 +17,7 @@ const APPOINTMENT_TYPES = [
 
 const WORK_DAYS = [1, 2, 3, 4]; // Lunes a Jueves
 
-const BASE_URL = (process.env.REACT_APP_N8N_BASE_URL || 'https://n8n-automation.chilldigital.tech').replace(/\/+$/, '');
+const BASE_URL = (process.env.REACT_APP_N8N_BASE_URL || 'https://n8n-mpindar.dentaldash.cloud').replace(/\/+$/, '');
 const N8N_ENDPOINTS = {
   CHECK_PATIENT: `${BASE_URL}/webhook/check-patient`,
   CREATE_APPOINTMENT: `${BASE_URL}/webhook/create-appointment`,
