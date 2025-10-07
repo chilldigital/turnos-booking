@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Calendar, Clock, User, CreditCard, Phone, AlertCircle, CheckCircle, Loader } from 'lucide-react';
 
 const APPOINTMENT_TYPES = [
@@ -17,14 +17,38 @@ const APPOINTMENT_TYPES = [
 
 const WORK_DAYS = [1, 2, 3, 4]; // Lunes a Jueves
 
+const BASE_URL = (process.env.REACT_APP_N8N_BASE_URL || 'https://n8n-automation.chilldigital.tech').replace(/\/+$/, '');
 const N8N_ENDPOINTS = {
-  CHECK_PATIENT: 'https://n8n-automation.chilldigital.tech/webhook/check-patient',
-  CREATE_APPOINTMENT: 'https://n8n-automation.chilldigital.tech/webhook/create-appointment',
-  GET_AVAILABILITY: 'https://n8n-automation.chilldigital.tech/webhook/get-availability'
+  CHECK_PATIENT: `${BASE_URL}/webhook/check-patient`,
+  CREATE_APPOINTMENT: `${BASE_URL}/webhook/create-appointment`,
+  GET_AVAILABILITY: `${BASE_URL}/webhook/get-availability`
 };
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+function toLocalISOStringWithOffset(date) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const tzo = -date.getTimezoneOffset();
+  const sign = tzo >= 0 ? '+' : '-';
+  const hh = pad(Math.floor(Math.abs(tzo) / 60));
+  const mm = pad(Math.abs(tzo) % 60);
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `${sign}${hh}:${mm}`
+  );
+}
+
 export default function BookingForm() {
-  // Form state
   const [formData, setFormData] = useState({
     dni: '',
     nombre: '',
@@ -38,36 +62,33 @@ export default function BookingForm() {
     hora: ''
   });
 
-  // UI state
   const [loading, setLoading] = useState(false);
   const [checkingPatient, setCheckingPatient] = useState(false);
   const [patientFound, setPatientFound] = useState(false);
+  const [patientSearched, setPatientSearched] = useState(false);
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
 
-  // Check patient by DNI
+  const dniDebounceRef = useRef(null);
+
   const checkPatient = async (dni) => {
     if (dni.length < 8) {
       setPatientFound(false);
+      setPatientSearched(false);
       return;
     }
-    
+
     setCheckingPatient(true);
     setError('');
-    
+
     try {
-      const response = await fetch(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`);
-      
-      if (!response.ok) {
-        throw new Error('Error al consultar paciente');
-      }
-      
+      const response = await fetchWithTimeout(`${N8N_ENDPOINTS.CHECK_PATIENT}?dni=${dni}`, {}, 10000);
+      if (!response.ok) throw new Error('Error al consultar paciente');
       const data = await response.json();
-      
+
       if (data.found && data.patient) {
-        // Autocompletar datos del paciente encontrado
         setFormData(prev => ({
           ...prev,
           nombre: data.patient.nombre || data.patient.name || '',
@@ -79,37 +100,31 @@ export default function BookingForm() {
         }));
         setPatientFound(true);
       } else {
-        // Limpiar datos si no se encuentra el paciente
-        setFormData(prev => ({
-          ...prev,
-          nombre: '',
-          telefono: '',
-          obraSocial: '',
-          numeroAfiliado: '',
-          alergias: '',
-          antecedentes: ''
-        }));
         setPatientFound(false);
       }
+      setPatientSearched(true);
     } catch (err) {
       console.error('Error checking patient:', err);
       setError('Error al verificar el paciente. Intenta nuevamente.');
       setPatientFound(false);
+      setPatientSearched(true);
     } finally {
       setCheckingPatient(false);
     }
   };
 
-  // Get available slots for selected date and appointment type
   const getAvailableSlots = async (fecha, tipoTurno) => {
     if (!fecha || !tipoTurno) return;
-    
+
     setLoadingAvailability(true);
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === tipoTurno);
-      const response = await fetch(
-        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`
+      const response = await fetchWithTimeout(
+        `${N8N_ENDPOINTS.GET_AVAILABILITY}?fecha=${fecha}&duration=${appointmentType.duration}`,
+        {},
+        10000
       );
+      if (!response.ok) throw new Error('Error al consultar disponibilidad');
       const data = await response.json();
       setAvailableSlots(data.availableSlots || []);
     } catch (err) {
@@ -120,38 +135,42 @@ export default function BookingForm() {
     }
   };
 
-  // Generate available dates (next 2 weeks, only work days)
   const availableDates = useMemo(() => {
     const dates = [];
     const today = new Date();
-    
     for (let i = 1; i <= 14; i++) {
-      const date = new Date(today);
-      date.setDate(today.getDate() + i);
-      
-      if (WORK_DAYS.includes(date.getDay())) {
-        dates.push({
-          value: date.toISOString().split('T')[0],
-          label: date.toLocaleDateString('es-AR', { 
-            weekday: 'long', 
-            day: '2-digit', 
-            month: 'long' 
-          })
-        });
+      const d = new Date(today);
+      d.setDate(today.getDate() + i);
+      if (WORK_DAYS.includes(d.getDay())) {
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const value = `${y}-${m}-${day}`;
+        const label = d.toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+        dates.push({ value, label });
       }
     }
-    
     return dates;
   }, []);
 
-  // Handle form input changes
-  const handleInputChange = (field, value) => {
+  const handleInputChange = (field, rawValue) => {
+    let value = rawValue;
+
+    if (field === 'dni') value = (rawValue || '').replace(/\D/g, '');
+    if (field === 'telefono') value = (rawValue || '').replace(/[ .-]/g, '');
+
     setFormData(prev => ({ ...prev, [field]: value }));
-    
+
     if (field === 'dni') {
-      checkPatient(value);
+      if (dniDebounceRef.current) clearTimeout(dniDebounceRef.current);
+      if (value && value.length >= 8) {
+        dniDebounceRef.current = setTimeout(() => checkPatient(value), 400);
+      } else {
+        setPatientFound(false);
+        setPatientSearched(false);
+      }
     }
-    
+
     if (field === 'fecha' || field === 'tipoTurno') {
       const newFormData = { ...formData, [field]: value };
       if (newFormData.fecha && newFormData.tipoTurno) {
@@ -160,7 +179,6 @@ export default function BookingForm() {
     }
   };
 
-  // Submit appointment
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -168,18 +186,15 @@ export default function BookingForm() {
 
     try {
       const appointmentType = APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno);
-      
-      // Combinar fecha y hora en formato ISO completo
       const [hours, minutes] = formData.hora.split(':');
       const appointmentDateTime = new Date(formData.fecha);
       appointmentDateTime.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0, 0);
-      const appointmentISO = appointmentDateTime.toISOString();
-      
-      const response = await fetch(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
+      const appointmentISO = toLocalISOStringWithOffset(appointmentDateTime);
+
+      const response = await fetchWithTimeout(N8N_ENDPOINTS.CREATE_APPOINTMENT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // Datos del paciente
           dni: formData.dni,
           nombre: formData.nombre,
           telefono: formData.telefono,
@@ -187,20 +202,22 @@ export default function BookingForm() {
           numeroAfiliado: formData.numeroAfiliado,
           alergias: formData.alergias || 'Ninguna',
           antecedentes: formData.antecedentes || 'Ninguno',
-          // Datos del turno
           tipoTurno: formData.tipoTurno,
           tipoTurnoNombre: appointmentType.name,
           duracion: appointmentType.duration,
-          fechaHora: appointmentISO, // Fecha y hora en formato ISO completo
+          fechaHora: appointmentISO,
           timezone: 'America/Argentina/Buenos_Aires',
-          // Metadatos
           isNewPatient: !patientFound
         })
-      });
+      }, 15000);
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Error al crear el turno');
+        let msg = 'Error al crear el turno';
+        try {
+          const errorData = await response.json();
+          msg = errorData.message || msg;
+        } catch (_) {}
+        throw new Error(msg);
       }
 
       await response.json();
@@ -213,10 +230,10 @@ export default function BookingForm() {
     }
   };
 
-  // Validation
   const isFormValid = () => {
-    return formData.dni && formData.nombre && formData.telefono && 
-           formData.tipoTurno && formData.fecha && formData.hora;
+    const dniOk = formData.dni && formData.dni.length >= 8;
+    const telOk = formData.telefono && formData.telefono.replace(/\D/g, '').length >= 8;
+    return dniOk && formData.nombre && telOk && formData.tipoTurno && formData.fecha && formData.hora;
   };
 
   if (success) {
@@ -226,7 +243,7 @@ export default function BookingForm() {
           <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <CheckCircle className="w-8 h-8 text-green-600" />
           </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Turno Confirmado!</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-4">¡Turno confirmado!</h2>
           <p className="text-gray-600 mb-6">
             Tu turno ha sido agendado exitosamente. Recibirás un recordatorio por WhatsApp un día antes.
           </p>
@@ -244,11 +261,11 @@ export default function BookingForm() {
               <span className="font-medium">{APPOINTMENT_TYPES.find(t => t.id === formData.tipoTurno)?.name}</span>
             </div>
           </div>
-          <button 
-            onClick={() => window.location.reload()} 
+          <button
+            onClick={() => window.location.reload()}
             className="mt-6 w-full bg-teal-600 text-white py-2 px-4 rounded-lg hover:bg-teal-700 transition-colors"
           >
-            Agendar Otro Turno
+            Agendar otro turno
           </button>
         </div>
       </div>
@@ -258,56 +275,61 @@ export default function BookingForm() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-teal-50 to-blue-50 flex items-center justify-center p-4">
       <div className="max-w-2xl w-full bg-white rounded-2xl shadow-xl overflow-hidden">
-        {/* Header */}
         <div className="bg-gradient-to-r from-teal-600 to-blue-600 p-6 text-white text-center">
-          <h1 className="text-3xl font-bold mb-2">Agendar Turno</h1>
-          <p className="text-teal-100">Completa los datos para reservar tu cita</p>
+          <h1 className="text-3xl font-bold mb-2">Agendar turno</h1>
+          <p className="text-teal-100">Completá los datos para reservar tu cita</p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="p-6 space-y-6" aria-busy={loading}>
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2" role="alert" aria-live="polite">
               <AlertCircle size={20} />
               {error}
             </div>
           )}
 
-          {/* DNI Field */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="dni" className="block text-sm font-medium text-gray-700 mb-2">
               <CreditCard className="inline w-4 h-4 mr-1" />
               DNI
             </label>
             <div className="relative">
               <input
+                id="dni"
                 type="text"
                 value={formData.dni}
                 onChange={(e) => handleInputChange('dni', e.target.value)}
-                placeholder="12.345.678"
+                placeholder="Ej: 12345678"
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 required
+                inputMode="numeric"
+                aria-describedby="dni-help"
               />
               {checkingPatient && (
-                <Loader className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 animate-spin" />
+                <Loader className="absolute right-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 animate-spin" aria-label="Buscando paciente" />
               )}
             </div>
             {patientFound && (
-              <p className="text-green-600 text-sm mt-1 flex items-center gap-1">
+              <p className="text-green-600 text-sm mt-1 flex items-center gap-1" aria-live="polite">
                 <CheckCircle size={16} />
-                Paciente encontrado - datos completados automáticamente
+                Paciente encontrado. Datos completados automáticamente.
+              </p>
+            )}
+            {patientSearched && !patientFound && !checkingPatient && formData.dni.length >= 8 && (
+              <p id="dni-help" className="text-gray-600 text-sm mt-1">
+                Paciente no encontrado. Podés continuar como paciente nuevo.
               </p>
             )}
           </div>
 
-          {/* Personal Info Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="nombre" className="block text-sm font-medium text-gray-700 mb-2">
                 <User className="inline w-4 h-4 mr-1" />
-                Nombre Completo
+                Nombre completo
               </label>
               <input
+                id="nombre"
                 type="text"
                 value={formData.nombre}
                 onChange={(e) => handleInputChange('nombre', e.target.value)}
@@ -316,30 +338,31 @@ export default function BookingForm() {
                 required
               />
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="telefono" className="block text-sm font-medium text-gray-700 mb-2">
                 <Phone className="inline w-4 h-4 mr-1" />
                 Teléfono
               </label>
               <input
+                id="telefono"
                 type="tel"
                 value={formData.telefono}
                 onChange={(e) => handleInputChange('telefono', e.target.value)}
-                placeholder="+54 381 123 4567"
+                placeholder="Ej: +54 3811234567"
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                 required
               />
             </div>
           </div>
 
-          {/* Insurance Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Obra Social
+              <label htmlFor="obraSocial" className="block text-sm font-medium text-gray-700 mb-2">
+                Obra social
               </label>
               <input
+                id="obraSocial"
                 type="text"
                 value={formData.obraSocial}
                 onChange={(e) => handleInputChange('obraSocial', e.target.value)}
@@ -347,12 +370,13 @@ export default function BookingForm() {
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               />
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                N° de Afiliado
+              <label htmlFor="numeroAfiliado" className="block text-sm font-medium text-gray-700 mb-2">
+                N° de afiliado
               </label>
               <input
+                id="numeroAfiliado"
                 type="text"
                 value={formData.numeroAfiliado}
                 onChange={(e) => handleInputChange('numeroAfiliado', e.target.value)}
@@ -362,13 +386,13 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Medical Info */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="alergias" className="block text-sm font-medium text-gray-700 mb-2">
                 Alergias
               </label>
               <input
+                id="alergias"
                 type="text"
                 value={formData.alergias}
                 onChange={(e) => handleInputChange('alergias', e.target.value)}
@@ -376,12 +400,13 @@ export default function BookingForm() {
                 className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               />
             </div>
-            
+
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="antecedentes" className="block text-sm font-medium text-gray-700 mb-2">
                 Antecedentes
               </label>
               <input
+                id="antecedentes"
                 type="text"
                 value={formData.antecedentes}
                 onChange={(e) => handleInputChange('antecedentes', e.target.value)}
@@ -391,19 +416,19 @@ export default function BookingForm() {
             </div>
           </div>
 
-          {/* Appointment Type */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="tipoTurno" className="block text-sm font-medium text-gray-700 mb-2">
               <Clock className="inline w-4 h-4 mr-1" />
-              Tipo de Turno
+              Tipo de turno
             </label>
             <select
+              id="tipoTurno"
               value={formData.tipoTurno}
               onChange={(e) => handleInputChange('tipoTurno', e.target.value)}
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               required
             >
-              <option value="">Selecciona el tipo de consulta</option>
+              <option value="">Seleccioná el tipo de consulta</option>
               {APPOINTMENT_TYPES.map((type) => (
                 <option key={type.id} value={type.id}>
                   {type.name} ({type.duration} min)
@@ -412,19 +437,19 @@ export default function BookingForm() {
             </select>
           </div>
 
-          {/* Date Selection */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label htmlFor="fecha" className="block text-sm font-medium text-gray-700 mb-2">
               <Calendar className="inline w-4 h-4 mr-1" />
               Fecha
             </label>
             <select
+              id="fecha"
               value={formData.fecha}
               onChange={(e) => handleInputChange('fecha', e.target.value)}
               className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent"
               required
             >
-              <option value="">Selecciona una fecha</option>
+              <option value="">Seleccioná una fecha</option>
               {availableDates.map((date) => (
                 <option key={date.value} value={date.value}>
                   {date.label}
@@ -433,12 +458,11 @@ export default function BookingForm() {
             </select>
           </div>
 
-          {/* Time Selection */}
           {formData.fecha && formData.tipoTurno && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 <Clock className="inline w-4 h-4 mr-1" />
-                Horario Disponible
+                Horario disponible
               </label>
               {loadingAvailability ? (
                 <div className="flex items-center gap-2 p-3 text-gray-600">
@@ -457,6 +481,7 @@ export default function BookingForm() {
                           ? 'bg-teal-600 text-white border-teal-600'
                           : 'bg-white text-gray-700 border-gray-300 hover:border-teal-500'
                       }`}
+                      aria-pressed={formData.hora === slot}
                     >
                       {slot} hs
                     </button>
@@ -468,10 +493,12 @@ export default function BookingForm() {
                   No hay horarios disponibles para esta fecha y tipo de turno.
                 </p>
               )}
+              {formData.fecha && formData.tipoTurno && !formData.hora && availableSlots.length > 0 && (
+                <p className="text-gray-600 text-sm mt-2">Seleccioná un horario para continuar.</p>
+              )}
             </div>
           )}
 
-          {/* Submit Button */}
           <div className="pt-4">
             <button
               type="submit"
@@ -481,12 +508,12 @@ export default function BookingForm() {
               {loading ? (
                 <>
                   <Loader className="w-5 h-5 animate-spin" />
-                  Creando Turno...
+                  Creando turno...
                 </>
               ) : (
                 <>
                   <Calendar className="w-5 h-5" />
-                  Confirmar Turno
+                  Confirmar turno
                 </>
               )}
             </button>
